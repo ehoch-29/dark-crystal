@@ -1,0 +1,10 @@
+*.fits
+*.fz
+*.png
+*.npy
+
+
+.python-version
+.DS_Store
+
+*/
