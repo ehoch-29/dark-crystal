@@ -25,12 +25,20 @@ def get_power(file_path):
         for n in range(4):
                 hdul = fits.getdata(file_path, n)
                 filter_data = sigma_clip(hdul[:3072])
+                overscan_filter = sigma_clip(hdul[:,3072:])
                 channel_power[n] = np.sum(hdul[:3072][~filter_data.mask])
-                avg_counts = np.mean(hdul[:3072][~filter_data.mask])/this_qe.iloc[0]
-                error[n] = np.std(hdul[:3072][~filter_data.mask])/this_qe.iloc[0]
+                avg_counts = np.mean(hdul[:3072][~filter_data.mask])
+                #plt.hist(hdul[:,3072:][~overscan_filter.mask], bins = 50)
+                plt.xlabel("Pixel Values")
+                plt.ylabel("Counts")
+                plt.title("Histogram of a single HDU's counts")
+                #plt.show()
+                #error[n] = np.sqrt((np.std(hdul[:3072][~filter_data.mask])/this_qe.iloc[0])**2+(np.std(hdul[:,3072:])/this_qe.iloc[0])**2)
+                error[n] = np.sqrt((np.std(hdul[:3072][~filter_data.mask])/this_qe.iloc[0])**2+(np.std(hdul[:,3072:]))**2)
                 print("error: ", error)
                 print("avg cts: ", avg_counts)
         #sum all four amplifiers and scale appropriately power = (counts*energy)/(gain*time*area)
+        #ccd_power =sum(channel_power)*energy*1e12/140/time/pixels/this_qe.iloc[0]
         ccd_power =sum(channel_power)*energy*1e12/140/time/pixels
         error_cts = np.mean(error)
         error_power = np.mean(error)*energy*1e12/140/time/np.sqrt(4*col*row)/(1.5e-5)**2
@@ -93,6 +101,7 @@ else:
                         wavelength  = header['WAVE']
                         time = header['EXPTIME']
                         photo_diode[i] = header['POWER']*1e12/scale
+                        print(photo_diode[i])
                         waves[i] = wavelength
 
                         #calculate the CCD power

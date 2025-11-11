@@ -39,8 +39,8 @@ if __name__ == "__main__":
         for i, file in enumerate(os.listdir(folder)):
                 file_path = os.path.join(folder, file)
                 print("file being processed: ", file)
-                #fig, axes = plt.subplots(2, 2, figsize =(8,8))
-                #axes = axes.flatten()
+                fig, axes = plt.subplots(2, 2, figsize =(8,8))
+                axes = axes.flatten()
 
                 #check to make sure that we are only processing fits files
                 if os.path.isfile(file_path) and file.endswith('.fits'):
@@ -59,7 +59,7 @@ if __name__ == "__main__":
                 #loop through each of the 4 amplifiers in each image
                 for n in hdus:
                         #define which subplot we are working in
-                        #ax = axes[n]
+                        ax = axes[n]
 
                         print("HDU: ", n)
                         #fig2, axes2 = plt.subplots(1, 1, figsize = (50, 10))
@@ -95,7 +95,7 @@ if __name__ == "__main__":
 
                         #fit the data with a multi_gaussian to get skipper parameters
                         heights, centers, widths, peaks  = OB.fit_multi_gaussian(count_density, bin_centers)
-                        #check_gauss_fit(heights, centers, widths[0], bin_centers, ax, count_list, peaks, counts)
+                        OB.check_gauss_fit(heights, centers, widths[0], bin_centers, ax, count_list, peaks, counts, file_path)
                         print("checking gaussian")
 
                         #integrate the zero peak gaussian to get f0
@@ -104,7 +104,7 @@ if __name__ == "__main__":
                         area = heights[0]*widths[0]*np.sqrt(2*np.pi)
                         print("area under zero peak: ", area, area1)
                         f0 = area/unmasked_pixel
-                        f0s.append(f0)
+                        f0s.append(float(f0))
                         print("f0: ", f0)
                         
                         #calculate the average gain per pixel
@@ -120,8 +120,8 @@ if __name__ == "__main__":
                         mask_list = masked_hdul.flatten().tolist()
                         bins = np.arange(-100, 1000, 20)
                         #ax.hist(mask_list, bins = bins)
-                        
-                        """
+                plt.show()                        
+                """
                         start = (masked_hdul < one_e_bound_max) & (masked_hdul > one_e_bound_min)
                         indices = np.where(start == True)
                         neighbors = []
@@ -135,56 +135,10 @@ if __name__ == "__main__":
                         print("# of single electron event: ", one_e_count)
                         sample = MultiSampleData(samples, gain, widths[0], one_e_bound_min, exposure, n, unmasked_pixel, len(indices[0]), one_e_count)
                         data.append(sample)
-                        """
-                monivars = [{"ANSAMP":samples, "f0":f0s}]
-                OB.update_evolFile(file, monivars, "monitoring_DB.tsv")
-                        #plt.show()
-        """
-        samples0 = np.zeros(int(len(data)/4))
-        sigmas0 = np.zeros(int(len(data)/4))
-        
-        samples1 = np.zeros(int(len(data)/4))
-        sigmas1 = np.zeros(int(len(data)/4))
+                """
+                monivars = [{"ANSAMP":samples, "f0":f0s, "EXP": 60}]
+                #OB.update_evolFile(file, monivars, "monitoring_DB.tsv")
 
-        samples2 = np.zeros(int(len(data)/4))
-        sigmas2 = np.zeros(int(len(data)/4))
-
-        samples3 = np.zeros(int(len(data)/4))
-        sigmas3 = np.zeros(int(len(data)/4))
-        
-        for i,sample in enumerate(data):
-                hdu = sample.hdu
-
-                if hdu == 0:
-                        samples0[int(i/4)] = sample.time
-                        sigmas0[int(i/4)]  = sample.no_neighbors/sample.unmasked
-                if hdu == 1:
-                        samples1[int(i/4)] = sample.time
-                        sigmas1[int(i/4)]  = sample.no_neighbors/sample.unmasked
-
-                if hdu == 2:
-                        samples2[int(i/4)] = sample.time
-                        sigmas2[int(i/4)]  = sample.no_neighbors/sample.unmasked
-
-                if hdu == 3:
-                        samples3[int(i/4)] = sample.time
-                        sigmas3[int(i/4)]  = sample.no_neighbors/sample.unmasked
-
-
-        sort = np.argsort(samples0)
-        sorted_samples = samples0[sort]
-        sorted_sigmas = sigmas0[sort]
-
-        plt.plot(samples0[sort], sigmas0[sort], 'o', label = "HDU 0")
-        plt.plot(samples1[sort], sigmas1[sort], 'x', label = "HDU 1")
-        plt.plot(samples2[sort], sigmas2[sort], 'v', label = "HDU 2")
-        plt.plot(samples3[sort], sigmas3[sort], 'p', label = "HDU 3")
-
-        plt.legend()
-        plt.xlabel("times")
-        plt.ylabel("# of single e events/total unmasked pixels")
-        plt.show()
-"""
 """
         #fit data with line
         slope, intercept = np.polyfit(num_samples, f0s, 1)

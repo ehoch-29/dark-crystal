@@ -1,3 +1,4 @@
+
 #needed constants
 h = 6.626e-34 #plank's constant
 c = 3e8 #speed of light
@@ -33,8 +34,9 @@ if __name__ == "__main__":
         data = []
 
         num_samples = []
+        averages = []
         #make a canvas to plot the whole count histogram onto 
-        hdus = [0, 1, 2,3]
+        hdus = [0, 1, 2, 3]
         #loop through each fits file in the folder
         for i, file in enumerate(os.listdir(folder)):
                 file_path = os.path.join(folder, file)
@@ -86,59 +88,16 @@ if __name__ == "__main__":
                         
                         #flatten the 2D array into a list to make into a histogram
                         count_list = masked_hdul.flatten().tolist()
-                        bins = np.arange(np.nanmin(count_list),np.nanmax(count_list), 20)
-
+                        averages.append(np.nanmedian(count_list))
+                #monivars = [{"ANSAMP":samples, "f0":f0s}]
+                #OB.update_evolFile(file, monivars, "monitoring_DB.tsv")
+        print(averages)
+        bins = np.arange(min(averages), max(averages), 5)
+        plt.hist(averages, bins = bins)
+        plt.title(hdus)
+        plt.show()
                         
-                        counts, bin_edges = np.histogram(count_list, bins=bins, density=False)
-                        count_density = counts/20
-                        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-
-                        #fit the data with a multi_gaussian to get skipper parameters
-                        heights, centers, widths, peaks  = OB.fit_multi_gaussian(count_density, bin_centers)
-                        #check_gauss_fit(heights, centers, widths[0], bin_centers, ax, count_list, peaks, counts)
-                        print("checking gaussian")
-
-                        #integrate the zero peak gaussian to get f0
-                        area1, err = quad(lambda x: OB.gaussian(x, heights[0], centers[0], widths[0]),
-                                         (centers[0]-3*widths[0]), (centers[0]+3*widths[0]))
-                        area = heights[0]*widths[0]*np.sqrt(2*np.pi)
-                        print("area under zero peak: ", area, area1)
-                        f0 = area/unmasked_pixel
-                        f0s.append(f0)
-                        print("f0: ", f0)
-                        
-                        #calculate the average gain per pixel
-                        differences = []
-                        for i in range(len(centers)-1):
-                                differences.append(centers[i+1]-centers[i])
-                        try: gain = sum(differences)/len(differences)
-                        except: gain = 2
-                        print("average gain is: ", gain)
-                        #get_counts(file_path)
-                        #one_e_bound_min, one_e_bound_max = one_e_parameters(heights[1], centers[1], widths[0], time)
-                        
-                        mask_list = masked_hdul.flatten().tolist()
-                        bins = np.arange(-100, 1000, 20)
-                        #ax.hist(mask_list, bins = bins)
-                        
-                        """
-                        start = (masked_hdul < one_e_bound_max) & (masked_hdul > one_e_bound_min)
-                        indices = np.where(start == True)
-                        neighbors = []
-                        one_e_count = 0
-                        for i in range(len(indices[0])):
-                                index = (int(indices[0][i]), int(indices[1][i]))
-                                event = check_neighbors(masked_hdul, index, neighbors, one_e_bound_min)
-                                if event == True:
-                                        one_e_count += 1
-                        print('# of no-filtered single electron events: ', len(indices[0]))
-                        print("# of single electron event: ", one_e_count)
-                        sample = MultiSampleData(samples, gain, widths[0], one_e_bound_min, exposure, n, unmasked_pixel, len(indices[0]), one_e_count)
-                        data.append(sample)
-                        """
-                monivars = [{"ANSAMP":samples, "f0":f0s}]
-                OB.update_evolFile(file, monivars, "monitoring_DB.tsv")
-                        #plt.show()
+        
         """
         samples0 = np.zeros(int(len(data)/4))
         sigmas0 = np.zeros(int(len(data)/4))
