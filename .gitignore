@@ -2,7 +2,9 @@
 *.fz
 *.png
 *.npy
-
+*.csv
+*.pdf
+*.tsv
 
 .python-version
 .DS_Store
