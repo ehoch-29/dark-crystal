@@ -28,35 +28,56 @@ def match_baseline(cube, no_cube):
         diff = np.median(no_cube) - np.median(cube)
         return no_cube - diff
 
-def extract_data_and_plot(folder, label, scale):
+def extract_data(folder):
+        """
+        function to extract data from the save_data.csv
+        folder: the file folder that contains the data you want
+        """
         save_file = os.path.join(folder, out_suffix)
         if os.path.isfile(save_file):
                 print(save_file)
                 df = pd.read_csv(save_file)
-                sorted_power = df.iloc[0, :].to_numpy()
-                sorted_power_norm = sorted_power/max(sorted_power)
-                sorted_photo_diode = df.iloc[1, :].to_numpy()
-                sorted_counts = df.iloc[2, :].to_numpy()
-                sorted_error_cts = df.iloc[3, :].to_numpy()
-                sorted_error_pwr = df.iloc[4, :].to_numpy()
+                ccd_power     = df.iloc[0, :].to_numpy()
+                pd_power      = df.iloc[1, :].to_numpy()
+                ccd_counts    = df.iloc[2, :].to_numpy()
+                ccd_pwr_error = df.iloc[3, :].to_numpy()
+                ccd_cts_error = df.iloc[4, :].to_numpy()
                 waves = df.columns.values
                 sorted_waves = np.array(list(map(float, waves)))
-                print(sorted_waves)
-                peak = np.argmax(sorted_power)
-                
 
-                #line = fit_baseline(sorted_waves[sorted_waves > 600], sorted_power[sorted_waves > 600])
-                x = np.arange(250, 700, 5)
-                #y = line[1]*line[0]**x
-                #plt.plot(x, y/max(sorted_power), 'x')
-                #print(line)
+        return ccd_power, pd_power, ccd_counts, ccd_pwr_error, ccd_cts_error, sorted_waves
 
-        if args.avgcts: ax.errorbar(sorted_waves, sorted_counts, yerr = sorted_error_cts, label = label + " CCD counts")
-        #if args.ccd:    ax.errorbar(sorted_waves[sorted_power > 1], sorted_power[sorted_power > 1], yerr=sorted_error_pwr[sorted_power > 1], label = label + ", CCD")
-        #if args.ccd:    ax.errorbar(sorted_waves[sorted_power > 1], sorted_power[sorted_power > 1]*scale/max(sorted_power[:200]), yerr=sorted_error_pwr[sorted_power > 1]*scale/max(sorted_power), label = label + ", CCD")
-        if args.ccd:    plt.semilogy(sorted_waves[sorted_power > 1], sorted_power[sorted_power > 1], label = label + ", CCD")
-        if args.pd :    plt.semilogy(sorted_waves[sorted_photo_diode != 0], sorted_photo_diode[sorted_photo_diode != 0], label = label + ", PD")
 
+
+def subtract_dark(ccd_power, dark_power, ccd_pwr_error, dark_pwr_error):
+        """
+        function to subtract the dark rate from the optical spectrum and combine the errors
+        ccd_power, ccd_pwr_error: the power extracted from extract_data from light data
+        dark_power, dark_pwr_error: the power extracted from extract_data from dark data
+        """
+        minlen = min(len(ccd_power), len(dark_power))
+        subtracted_pwr = ccd_power[:minlen] - dark_power[:minlen]
+        combined_error = np.zeros(len(ccd_pwr_error))
+        for i in range(len(ccd_pwr_error[:minlen])):
+                combined_error[i] = np.sqrt((ccd_pwr_error[i])**2 + (dark_pwr_error[i])**2)
+        return subtracted_pwr, combined_error
+
+
+def calculate_qe(ccd_power, pd_power):
+        """
+        function to generate a relative qe using the pd power to account for systematics
+        ccd_power: the power after the dark rate subtraction
+        pd_power: the photodiode power
+        """
+        norm_pd_power = pd_power/max(pd_power)
+
+        qe = np.zeros(len(ccd_power))
+        for i, w in enumerate(ccd_power):
+                qe[i] = w/norm_pd_power[i]
+
+        return qe
+        
+        
 def plot_qe(folder, label, scale, dark_file):
         save_file = os.path.join(folder, out_suffix)
         if os.path.isfile(save_file):
@@ -80,9 +101,6 @@ def plot_qe(folder, label, scale, dark_file):
                 minlen = min(len(sorted_power), len(dark_power))
                 power_plot = sorted_power[:minlen] - dark_power[:minlen]
 
-                normalized_photodiode = sorted_photo_diode/max(sorted_photo_diode)
-                for i, w in enumerate(power_plot):
-                        power_plot[i] = w/normalized_photodiode[i]
 
                 #line = fit_baseline(sorted_waves[sorted_waves > 600], sorted_power[sorted_waves > 600])
                 x = np.arange(250, 700, 5)
@@ -257,13 +275,9 @@ parser.add_argument( '-a', '--avgcts', action = 'store_true', help = 'include -a
 args = parser.parse_args()
 
 #get the folder we are processing in this run of the code
-#folders = ["2025_03_19_led_60sec", "2025_03_18_led_cube_60sec", "2025_03_19_led_cube_30sec", "2025_03_19_led_cube_10sec", "2025_03_20_dark"]
-#folders = ["2025_03_20_led_epoxy", "2025_03_19_led_60sec"]
-folders = ["20251029_broadband","20251103_broadband_5sec"]
-#folders = ["2025_03_25_cube_60sec"]
-#folders = ["2025_06_30_led_test_filter6"]
+folders = ["Astroskipper_qe"]
 
-dark = "20251104_dark/save_data.csv"
+dark = "20251104_dark"
 #folders = ["2025_02_07_cube_5sec", "2025_02_06_cube_filter4"]
 out_suffix = "save_data.csv"
 
@@ -284,11 +298,27 @@ new_qe.set_index('wavelengths', inplace=True)
 fig, ax = plt.subplots()
 for i, folder in enumerate(folders):
         print(labels[i])
+        ccd_power, pd_power, ccd_counts, ccd_pwr_error, ccd_cts_error, sorted_waves = extract_data(folder)
+        #dark_ccd_power, dark_pd_power, dark_ccd_counts, dark_ccd_pwr_error, dark_ccd_cts_error, dark_sorted_waves = extract_data(dark)
+        data = np.loadtxt('ABS_QE_Calibration.txt')
+        pd_wavelengths = data[:,0]
+        pd_power       = data[:,1]
+        
+        print(*pd_wavelengths)
+        print(*pd_power)
+        #subtracted_power, combined_error = subtract_dark(ccd_power, dark_ccd_power, ccd_pwr_error, dark_ccd_pwr_error)
+        qe = calculate_qe(ccd_power[sorted_waves > 300], pd_power[pd_wavelengths < 450])
+        plt.plot(sorted_waves[sorted_waves > 300], qe, label = labels[i] + " qe?")
+        if args.avgcts: ax.errorbar(sorted_waves, ccd_counts, ccd_cts_error, label = labels[i] + " CCD counts")
+        if args.ccd:    plt.semilogy(sorted_waves[ccd_power > 1], ccd_power[ccd_power > 1], label = labels[i] + ", CCD")
+        if args.pd :    plt.semilogy(sorted_waves[pd_power != 0], pd_power[pd_power != 0], label = labels[i] + ", PD")
+
+
         #extract_data_and_plot(folder, labels[i], 1)
         #if i == 0: extract_data_subtract_and_plot(folder, labels[i], 1)
         #if i == 1: extract_data_and_plot(folder, labels[i], 1)
         #if i == 2: extract_data_subtract_and_plot(folder, labels[i], 4)
-        plot_qe(folder,labels[i], 1, dark)
+        #plot_qe(folder,labels[i], 1, dark)
 plt.yscale("log")
 #plt.xlim(200, 400)
 plt.xlabel("wavelength")

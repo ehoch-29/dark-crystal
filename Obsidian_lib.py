@@ -180,7 +180,7 @@ def check_gauss_fit(heights, centers, widths, bin_centers, ax, data, offset_peak
                 #plot_params.append(widths)
         x_fit = np.arange(min(bin_centers), max(bin_centers), 20)
         y_fit = multi_gaussian(x_fit, *plot_params)
-        ax.plot(x_fit, y_fit, label='Fitted Sum of Gaussians', color='red')
+        #ax.plot(x_fit, y_fit, label='Fitted Sum of Gaussians', color='red')
         
         #Plot individual Gaussians
         for i in range(1, len(plot_params), 2):
@@ -189,7 +189,7 @@ def check_gauss_fit(heights, centers, widths, bin_centers, ax, data, offset_peak
                 std = plot_params[0]
                 y_component = amp * np.exp(-((x_fit - mean) ** 2) / (2 * std ** 2))
                 
-                ax.plot(x_fit, y_component, '--', label=f'Gaussian {i//3 + 1}')
+                #ax.plot(x_fit, y_component, '--', label=f'Gaussian {i//3 + 1}')
         
         #set the x ticks to say the number of e- that it corresponds to
         #custom_xtick_loc    = np.arange(0, 1500, int(sum(gain)/len(gain)))

@@ -67,7 +67,7 @@ file_num = len([name for name in os.listdir(folder) if os.path.isfile(os.path.jo
 out_suffix = "save_data.csv"
 save_file = os.path.join(folder, out_suffix)
 print(save_file)
-
+print(file_num)
 #if we have already run the processing code on this folder just load in the saved .csv and skip to plotting it
 if os.path.isfile(save_file) and override==False:
         df = pd.read_csv(save_file)
@@ -98,12 +98,14 @@ else:
                         row = int(header['NROW'])
                         if row > 500:
                                 row = 500
-                        wavelength  = header['WAVE']
-                        time = header['EXPTIME']
-                        photo_diode[i] = header['POWER']*1e12/scale
-                        print(photo_diode[i])
+                        #wavelength  = header['WAVE']
+                        print(file_path[35:38])
+                        wavelength = file_path[35:38]
+                        time = 10
+                        #time = header['EXPTIME']
+                        #photo_diode[i] = header['POWER']*1e12/scale
                         waves[i] = wavelength
-
+                        photo_diode[i] = 0
                         #calculate the CCD power
                         power_qe[i], avg_counts[i], error_cts[i], error_pwr[i]  = get_power(file_path)
 

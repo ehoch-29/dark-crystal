@@ -36,11 +36,12 @@ if __name__ == "__main__":
         #make a canvas to plot the whole count histogram onto 
         hdus = [0, 1, 2,3]
         #loop through each fits file in the folder
+        fig, axes = plt.subplots(2, 2, figsize =(8,8))
         for i, file in enumerate(os.listdir(folder)):
                 file_path = os.path.join(folder, file)
                 print("file being processed: ", file)
-                #fig, axes = plt.subplots(2, 2, figsize =(8,8))
-                #axes = axes.flatten()
+
+                axes = axes.flatten()
 
                 #check to make sure that we are only processing fits files
                 if os.path.isfile(file_path) and file.endswith('.fits'):
@@ -49,7 +50,7 @@ if __name__ == "__main__":
                         print("number of samples: ", samples)
                         num_samples.append(samples)
                         f0s = []
-                        #fig.suptitle(samples)
+                        fig.suptitle(samples)
                         #print(exposure)
                         time = samples*3.86 + 5.21 #time for the readout (calculated somewhat manually)
                         
@@ -59,7 +60,7 @@ if __name__ == "__main__":
                 #loop through each of the 4 amplifiers in each image
                 for n in hdus:
                         #define which subplot we are working in
-                        #ax = axes[n]
+                        ax = axes[n]
 
                         print("HDU: ", n)
                         #fig2, axes2 = plt.subplots(1, 1, figsize = (50, 10))
@@ -95,7 +96,7 @@ if __name__ == "__main__":
 
                         #fit the data with a multi_gaussian to get skipper parameters
                         heights, centers, widths, peaks  = OB.fit_multi_gaussian(count_density, bin_centers)
-                        #check_gauss_fit(heights, centers, widths[0], bin_centers, ax, count_list, peaks, counts)
+                        OB.check_gauss_fit(heights, centers, widths[0], bin_centers, ax, count_list, peaks, counts, file_path)
                         print("checking gaussian")
 
                         #integrate the zero peak gaussian to get f0
@@ -136,9 +137,11 @@ if __name__ == "__main__":
                         sample = MultiSampleData(samples, gain, widths[0], one_e_bound_min, exposure, n, unmasked_pixel, len(indices[0]), one_e_count)
                         data.append(sample)
                         """
+
                 monivars = [{"ANSAMP":samples, "f0":f0s}]
                 OB.update_evolFile(file, monivars, "monitoring_DB.tsv")
-                        #plt.show()
+        plt.legend()
+        plt.show()
         """
         samples0 = np.zeros(int(len(data)/4))
         sigmas0 = np.zeros(int(len(data)/4))
