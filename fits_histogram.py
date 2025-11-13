@@ -37,12 +37,13 @@ if __name__ == "__main__":
         hdus = [0, 1, 2,3]
         #loop through each fits file in the folder
         fig, axes = plt.subplots(2, 2, figsize =(8,8))
+        labels = ['light', 'dark']
         for i, file in enumerate(os.listdir(folder)):
                 file_path = os.path.join(folder, file)
                 print("file being processed: ", file)
 
                 axes = axes.flatten()
-
+                
                 #check to make sure that we are only processing fits files
                 if os.path.isfile(file_path) and file.endswith('.fits'):
                         hdul_dummy, header = fits.getdata(file_path, header = True) #read the header from the file
@@ -74,8 +75,8 @@ if __name__ == "__main__":
                         halo_mask = np.full((row, col), True, dtype=bool) #create a mask of the same dimensions of hdul
 
                         #for each of the hot pixels mask the surrounding area
-                        for i in range(len(cosmic_indices[0])):
-                                cosmic_index = (int(cosmic_indices[0][i]), int(cosmic_indices[1][i]))
+                        for j in range(len(cosmic_indices[0])):
+                                cosmic_index = (int(cosmic_indices[0][j]), int(cosmic_indices[1][j]))
                                 OB.cosmic_masks(hdul, cosmic_index, halo_mask)
 
                         #make a masked array using the halo mask
@@ -93,10 +94,11 @@ if __name__ == "__main__":
                         counts, bin_edges = np.histogram(count_list, bins=bins, density=False)
                         count_density = counts/20
                         bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-
+                        
                         #fit the data with a multi_gaussian to get skipper parameters
                         heights, centers, widths, peaks  = OB.fit_multi_gaussian(count_density, bin_centers)
-                        OB.check_gauss_fit(heights, centers, widths[0], bin_centers, ax, count_list, peaks, counts, file_path)
+                        
+                        OB.check_gauss_fit(heights, centers, widths[0], bin_centers, ax, count_list, peaks, counts,' light')
                         print("checking gaussian")
 
                         #integrate the zero peak gaussian to get f0

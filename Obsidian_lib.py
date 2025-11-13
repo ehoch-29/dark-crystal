@@ -117,8 +117,8 @@ def fit_multi_gaussian(counts, bin_centers):
         filtered_counts = counts[mask]
         filtered_centers = bin_centers[mask]
         #use find peaks to get initial guesses at location and heights of gaussians
-        peaks, _  = find_peaks(filtered_counts, distance = 5, prominence = (0.0001, None), height = 100)
-        
+        peaks, _  = find_peaks(filtered_counts, distance = 5, prominence = (0.0001, None), height = 5)
+        print("peaks: ", peaks)
         #convert the result from find_peaks into an initial guess that can be used in the function
         amps  = []
         initial_guess = [25]
@@ -140,7 +140,7 @@ def fit_multi_gaussian(counts, bin_centers):
                 print("data could not be fit with multigaussian")
                 popt = [1, 1, 1, 2, 3]
                 pcov = [0, 0, 0]
-        print("Optimal fit: ", popt)
+        #print("Optimal fit: ", popt)
         heights = []
         centers = []
         widths = [popt[0]]
@@ -168,15 +168,15 @@ def one_e_parameters(amp, mean, std, time):
         one_e_max = mean + 2*std
         return one_e_min, one_e_max
 
-def check_gauss_fit(heights, centers, widths, bin_centers, ax, data, offset_peaks, counts, file_path):
+def check_gauss_fit(heights, centers, widths, bin_centers, ax, data, offset_peaks, counts, label):
         #adjust the data such that the 0 e- peak is at 0 and plot the multi-gaussian fit
-        offset_centers = [item - centers[0] for item in centers]
+        #offset_centers = [item - centers[0] for item in centers]
         plot_params = []
         bins = np.arange(np.nanmin(data), np.nanmax(data), 20)
         plot_params.append(widths)
-        for p in range(len(offset_centers)):
+        for p in range(len(centers)):
                 plot_params.append(heights[p])
-                plot_params.append(offset_centers[p])
+                plot_params.append(centers[p])
                 #plot_params.append(widths)
         x_fit = np.arange(min(bin_centers), max(bin_centers), 20)
         y_fit = multi_gaussian(x_fit, *plot_params)
@@ -200,14 +200,14 @@ def check_gauss_fit(heights, centers, widths, bin_centers, ax, data, offset_peak
 
         #plot the data, peaks, and gaussians
         
-        offset_list = [item - centers[0] for item in data]
+        #offset_list = [item - centers[0] for item in data]
         offset_bins = np.array([item - centers[0] for item in bin_centers])
 
-        ax.hist(offset_list, bins=bins, density=False, histtype = 'step', label=file_path)
+        ax.hist(data, bins=bins, density=False, histtype = 'step', label=label)
         ax.plot(offset_bins[offset_peaks], counts[offset_peaks], 'x', label = 'Peaks', color = 'red')
         ax.set_xlim(-400, 2000)
         ax.set_xlabel('Pixel Value (e-)')
-
+        ax.legend()
 
 def update_evolFile(filename, newdata, evolfile):
     if os.path.exists(evolfile):                                                # Check if the file exists                        
