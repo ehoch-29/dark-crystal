@@ -1,0 +1,13 @@
+*.fits
+*.fz
+*.png
+*.npy
+*.csv
+*.pdf
+*.tsv
+*.txt
+
+.python-version
+.DS_Store
+
+*/
