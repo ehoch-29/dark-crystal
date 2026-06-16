@@ -44,7 +44,8 @@ def extract_data(folder):
                 ccd_cts_error = df.iloc[4, :].to_numpy()
                 waves = df.columns.values
                 sorted_waves = np.array(list(map(float, waves)))
-
+                print(ccd_power)
+                
         return ccd_power, pd_power, ccd_counts, ccd_pwr_error, ccd_cts_error, sorted_waves
 
 
@@ -69,11 +70,11 @@ def calculate_qe(ccd_power, pd_power):
         ccd_power: the power after the dark rate subtraction
         pd_power: the photodiode power
         """
-        norm_pd_power = pd_power/max(pd_power)
+        norm_pd_power = pd_power*1.772393317902857743e-02
 
         qe = np.zeros(len(ccd_power))
-        for i, w in enumerate(ccd_power):
-                qe[i] = w/norm_pd_power[i]
+        for i, w in enumerate(norm_pd_power):
+                qe[i] = ccd_power[i]/w
 
         return qe
         
@@ -271,23 +272,30 @@ parser = argparse.ArgumentParser('Parse text in the file')
 parser.add_argument( '-c', '--ccd'   , action = 'store_true', help = 'include -c flag to plot ccd power')
 parser.add_argument( '-p', '--pd'    , action = 'store_true', help = 'include -p flag to plot photodiode power')
 parser.add_argument( '-a', '--avgcts', action = 'store_true', help = 'include -a flag to plot average counts')
+parser.add_argument( '-q', '--quanteff', action = 'store_true', help = 'include -q flag to plot the qe')
+parser.add_argument( '-t', '--title', default= "data", help = 'what you want the plot to be named')
 
 args = parser.parse_args()
 
 #get the folder we are processing in this run of the code
-folders = ["Astroskipper_qe"]
+#folders = ["20251103_broadband_5sec"]
+##folders = ["20251031_broadband_20sec", "20251103_broadband_5sec"]
+#folders = ["20260107_quartz_tungsten_final", "20251103_broadband_5sec"]
+#folders = ["20260108_qt_filter3_2", "20260108_xenon_filter3"]
+folders = ["2026_05_18_polarizer_bkg", "2026_05_21_postoutage", "2025_06_30_dark"]
 
 dark = "20251104_dark"
 #folders = ["2025_02_07_cube_5sec", "2025_02_06_cube_filter4"]
 out_suffix = "save_data.csv"
 
 #labels = ["60 sec", "60 sec cube", "30 sec cube", "10 sec cube", "dark"]
-labels = ["10 sec", "5 sec"]
+labels = ["Polarizer", "Polarizer - post first outage", "No polarizer"]
 Filter = "Filter 4 "
 title_name = "Scintillation of Trans-stilbene with Different Stimulation Sources"
 #pl = pd.read_csv("~/Downloads/lit_pl.csv")
 ab = pd.read_csv("absorption.csv")
 
+lamp = pd.read_csv("lamp_spectrum.csv")
 
 qe = pd.read_csv("qe.csv")
 full_wavelengths = np.arange(270, qe.iloc[:, 0].max() + 1, 1)
@@ -296,35 +304,54 @@ new_qe = pd.DataFrame({"wavelengths": full_wavelengths, "qe": interpolated_qe})
 new_qe.set_index('wavelengths', inplace=True)
 
 fig, ax = plt.subplots()
+#ccd_power, pd_power, ccd_counts, ccd_pwr_error, ccd_cts_error, sorted_waves = extract_data(folders[0])
+#ccd_power_false, pd_power_true, ccd_counts, ccd_pwr_error, ccd_cts_error, sorted_waves = extract_data(folders[1])
+#qe_pd = pd_power_true[::2]
+#qe_waves = sorted_waves[::2]
+#qe = calculate_qe(ccd_power, qe_pd)
+#plt.plot(qe_waves[5:], qe[5:]/np.nanmax(qe[5:]), label = " qe?")
+#plt.plot(new_qe['qe'], label = "Edgar's QE")
+#plt.show()
+#print(qe_waves)
 for i, folder in enumerate(folders):
         print(labels[i])
         ccd_power, pd_power, ccd_counts, ccd_pwr_error, ccd_cts_error, sorted_waves = extract_data(folder)
         #dark_ccd_power, dark_pd_power, dark_ccd_counts, dark_ccd_pwr_error, dark_ccd_cts_error, dark_sorted_waves = extract_data(dark)
         data = np.loadtxt('ABS_QE_Calibration.txt')
-        pd_wavelengths = data[:,0]
-        pd_power       = data[:,1]
+        #pd_wavelengths = data[:,0]
+        #pd_power       = data[:,1]
         
-        print(*pd_wavelengths)
-        print(*pd_power)
-        #subtracted_power, combined_error = subtract_dark(ccd_power, dark_ccd_power, ccd_pwr_error, dark_ccd_pwr_error)
-        qe = calculate_qe(ccd_power[sorted_waves > 300], pd_power[pd_wavelengths < 450])
-        plt.plot(sorted_waves[sorted_waves > 300], qe, label = labels[i] + " qe?")
-        if args.avgcts: ax.errorbar(sorted_waves, ccd_counts, ccd_cts_error, label = labels[i] + " CCD counts")
-        if args.ccd:    plt.semilogy(sorted_waves[ccd_power > 1], ccd_power[ccd_power > 1], label = labels[i] + ", CCD")
-        if args.pd :    plt.semilogy(sorted_waves[pd_power != 0], pd_power[pd_power != 0], label = labels[i] + ", PD")
 
+        #subtracted_power, combined_error = subtract_dark(ccd_power, dark_ccd_power, ccd_pwr_error, dark_ccd_pwr_error)
+        print(ccd_power, pd_power)
+        qe = calculate_qe(ccd_power, pd_power)
+        print(qe)
+        print(sorted_waves)
+
+
+        if i == 0:
+                scale = 2
+        else:
+                scale = 1
+        print(qe[10])
+        if args.quanteff: plt.plot(sorted_waves, qe, label = labels[i] + " qe?")
+        if args.avgcts:   plt.semilogy(sorted_waves[ccd_counts > 1], ccd_counts[ccd_counts > 1], label = labels[i] + " CCD counts")
+        if args.ccd:      plt.semilogy(sorted_waves[ccd_power > 1], ccd_power[ccd_power > 1]/scale, label = labels[i] + ", CCD")
+        if args.pd :      plt.semilogy(sorted_waves[pd_power != 0][:90], pd_power[pd_power != 0][:90]/max(pd_power[:90]), label = labels[i] + ", PD")
+        #plt.plot(lamp.iloc[:, 0], lamp.iloc[:, 1]/max(lamp.iloc[:, 1]), label = "lamp spectrum")        
 
         #extract_data_and_plot(folder, labels[i], 1)
         #if i == 0: extract_data_subtract_and_plot(folder, labels[i], 1)
         #if i == 1: extract_data_and_plot(folder, labels[i], 1)
         #if i == 2: extract_data_subtract_and_plot(folder, labels[i], 4)
         #plot_qe(folder,labels[i], 1, dark)
-plt.yscale("log")
-#plt.xlim(200, 400)
+
+#plt.yscale("log")
+#plt.xlim(250, 400)
 plt.xlabel("wavelength")
 plt.ylabel("Power")
-plt.title("Comparing Dark and lamp data")
-plt.plot(new_qe['qe'], label = "Edgar's QE")
+plt.title(args.title)
+#plt.plot(new_qe['qe'], label = "Edgar's QE")
 plt.legend()
 plt.show()
 #extract_data_add_and_plot("2025_03_25_cube_60sec", "2025_05_28_led", 1)

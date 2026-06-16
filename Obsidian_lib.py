@@ -204,7 +204,7 @@ def check_gauss_fit(heights, centers, widths, bin_centers, ax, data, offset_peak
         offset_bins = np.array([item - centers[0] for item in bin_centers])
 
         ax.hist(data, bins=bins, density=False, histtype = 'step', label=label)
-        ax.plot(offset_bins[offset_peaks], counts[offset_peaks], 'x', label = 'Peaks', color = 'red')
+        #ax.plot(offset_bins[offset_peaks], counts[offset_peaks], 'x', label = 'Peaks', color = 'red')
         ax.set_xlim(-400, 2000)
         ax.set_xlabel('Pixel Value (e-)')
         ax.legend()

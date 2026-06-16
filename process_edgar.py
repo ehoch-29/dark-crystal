@@ -1,3 +1,4 @@
+from natsort import natsorted
 import numpy as np
 import matplotlib.pyplot as plt
 from astropy.io import fits
@@ -7,6 +8,7 @@ import sys
 import pandas as pd
 import csv
 import argparse
+from glob import glob
 
 #needed constants
 h = 6.626e-34 #plank's constant
@@ -38,8 +40,8 @@ def get_power(file_path):
                 print("error: ", error)
                 print("avg cts: ", avg_counts)
         #sum all four amplifiers and scale appropriately power = (counts*energy)/(gain*time*area)
-        ccd_power =sum(channel_power)*energy*1e12/140/time/pixels/this_qe.iloc[0]
-        #ccd_power =sum(channel_power)*energy*1e12/140/time/pixels
+        #ccd_power =sum(channel_power)*energy*1e12/140/time/pixels/this_qe.iloc[0]
+        ccd_power =sum(channel_power)*energy*1e12/140/time/pixels
         error_cts = np.mean(error)
         error_power = np.mean(error)*energy*1e12/140/time/np.sqrt(4*col*row)/(1.5e-5)**2
         print(pixels, ccd_power, error_power)
@@ -65,6 +67,8 @@ override = args.override
 print(override)
 file_num = len([name for name in os.listdir(folder) if os.path.isfile(os.path.join(folder, name))]) #num of files in that folde
 out_suffix = "save_data.csv"
+qe_files_fz = natsorted((glob('/Users/Nora/Research/Fermi/raw/*.fz')))
+qe_files=natsorted((glob('/Users/Nora/Research/Fermi/edgar_qe/*.fits')))
 save_file = os.path.join(folder, out_suffix)
 print(save_file)
 print(file_num)
@@ -88,27 +92,29 @@ else:
         error_pwr = np.zeros(file_num)
 
         #for each file in the folder calculate the power 
-        for i, file in enumerate(os.listdir(folder)):
-                file_path = os.path.join(folder, file)
-                print(file_path)
-                if os.path.isfile(file_path) and file.endswith('.fits'):
-                        #get the info from the primary header
-                        hdul, header = fits.getdata(file_path,header = True)
-                        col = int(header['CCDNCOL'])/2
-                        row = int(header['NROW'])
-                        if row > 500:
-                                row = 500
-                        wavelength  = header['WAVE']
-                        print(file_path[35:38])
-                        #wavelength = file_path[35:38]
-                        time = 10
-                        #time = header['EXPTIME']
-                        photo_diode[i] = header['POWER']*1e12/scale
-                        waves[i] = wavelength
-                        #photo_diode[i] = 0
-                        #calculate the CCD power
-                        power_qe[i], avg_counts[i], error_cts[i], error_pwr[i]  = get_power(file_path)
+        for i, f in enumerate(qe_files):
+                #get the info from the primary header
+                hdul, header = fits.getdata(f,header = True)
+                col = int(header['CCDNCOL'])/2
+                row = int(header['NROW'])
+                if row > 500:
+                        row = 500
 
+                #print(file_path[28:31])
+                #wavelength = file_path[28:31]
+                time = 10
+                #time = header['EXPTIME']
+                #photo_diode[i] = header['POWER']*1e12/scale
+                hdr = fits.open(qe_files_fz[i])[0].header
+                print(qe_files_fz[i])
+                photo_diode[i] = hdr['POWER']
+                wavelength  = hdr['WAVE']
+                waves[i] = wavelength
+
+                #photo_diode[i] = 0
+                #calculate the CCD power
+                power_qe[i], avg_counts[i], error_cts[i], error_pwr[i]  = get_power(f)
+                print("photodiode power = ", photo_diode[i])
         #sort all of the data by the wavelengths for graphing
         sort = np.argsort(waves)
         sorted_waves = waves[sort]

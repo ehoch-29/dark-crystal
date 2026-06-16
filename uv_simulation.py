@@ -5,7 +5,7 @@ from scipy.special import beta as beta_function
 
 # Parameters
 width, height = 512, 512
-wavelength = 250 # nm
+wavelength = 275 # nm
 mean_incident_energy_per_pixel = 1239.8/wavelength  # eV, energy deposited per pixel
 
 # Silicon parameters at 300 K (from paper)

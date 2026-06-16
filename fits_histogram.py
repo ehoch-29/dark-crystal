@@ -41,7 +41,7 @@ if __name__ == "__main__":
         for i, file in enumerate(os.listdir(folder)):
                 file_path = os.path.join(folder, file)
                 print("file being processed: ", file)
-
+                label = labels[i]
                 axes = axes.flatten()
                 
                 #check to make sure that we are only processing fits files
@@ -98,10 +98,15 @@ if __name__ == "__main__":
                         #fit the data with a multi_gaussian to get skipper parameters
                         heights, centers, widths, peaks  = OB.fit_multi_gaussian(count_density, bin_centers)
                         
-                        OB.check_gauss_fit(heights, centers, widths[0], bin_centers, ax, count_list, peaks, counts,' light')
+                        OB.check_gauss_fit(heights, centers, widths[0], bin_centers, ax, count_list, peaks, counts, label)
                         print("checking gaussian")
-
+                        print("number of peaks: ", len(heights), len(widths))
                         #integrate the zero peak gaussian to get f0
+                        areas = []
+                        for peak in np.arange(len(heights)):
+                                areas.append(heights[peak]*widths[0]*np.sqrt(2*np.pi))
+                        print("areas: ", areas)
+                                
                         area1, err = quad(lambda x: OB.gaussian(x, heights[0], centers[0], widths[0]),
                                          (centers[0]-3*widths[0]), (centers[0]+3*widths[0]))
                         area = heights[0]*widths[0]*np.sqrt(2*np.pi)

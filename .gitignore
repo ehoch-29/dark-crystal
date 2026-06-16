@@ -6,7 +6,9 @@
 *.pdf
 *.tsv
 *.txt
-
+*.root
+*.dat
+*.hdf5
 .python-version
 .DS_Store
 
