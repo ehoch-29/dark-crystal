@@ -3,11 +3,22 @@ import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 from astropy.io import fits
 from astropy.stats import sigma_clip
-
+from scipy.signal import find_peaks
 
 def gaussian(x, amp, mean, std):
     y = amp * np.exp(-((x-mean) ** 2) / (2 * std ** 2))
     return y
+
+def multi_gaussian(x, *params):
+        """Sum of N gaussians. Params: [std1, ampl1, mean1, amp2, mean2, , ...]"""
+        y = np.zeros_like(x)
+        for i in range(0, len(params), 3):
+            amp = float(params[i])
+            mean = float(params[i+1])
+            std = float(params[i+2])
+            #print(i, "amp: ", amp, "mean: ",  mean, "std: ",  std)                                                                                                      
+            y += amp * np.exp(-((x - mean) ** 2) / (2 * std **2))
+        return y
 
 class QISCCDFactory:
     """
@@ -26,14 +37,15 @@ class QISCCDFactory:
         """
         self.image_name = image_name
         self.image_nums = image_num
+
         self.lta_num = lta_num
         ltanums = []
         for n in range(lta_num):
             ltanums.append(str(n+1))
         self.filenames = {}
-        for i, lta in enumerate(ltanums):
+        for i, lta in enumerate(self.ltanums):
             self.filenames[i] = self.image_name + "_" + lta + "_" + image_num + ".fits"
-
+        self.box_style = dict(boxstyle='round', facecolor='wheat', alpha=0.5, edgecolor='blue')
         
     def load_images(self, nAmp):
         """
@@ -57,7 +69,9 @@ class QISCCDFactory:
         self.samples = float(self.header['NSAMP'])
         self.nCCDcol = int(self.header["CCDNCOL"])
         self.overscan_start = int(self.nCCDcol + 10)
-        
+        self.npixels = self.nrow*self.nCCDcol
+        self.exptime = 49.61*60 #to-do, figure out how to make this not hardcoded, for 150 rows and 400 samples
+        print(self.header)
     def process_overscan(self):
         """
         Pulls out the overscan and does things
@@ -75,9 +89,35 @@ class QISCCDFactory:
             print(np.nanmin(values), np.nanmax(values))
             bins = np.arange(np.nanmin(values), np.nanmin(values)+1500, 20)
             ax.hist(values, bins=bins, density=False, histtype = 'step')
+            #ax.set_yscale('log')
+        plt.suptitle("Histogram of Overscan values")
+        #plt.show()
 
+                
+    def plot_active_area(self):
+        """
+        Pulls out the overscan and does things
+        """
+        fig, axes = plt.subplots(4, 4, figsize = (8, 8))
+        axes = axes.flatten()
+        try:
+            self.active_areas
+        except:
+            self.active_areas = {}
+            for n in range(self.nAmp):
+                self.active_areas[n] = self.hduls[n][:,:self.overscan_start]
+                self.active_areas[n] = sigma_clip(self.active_areas[n], sigma=5)
+
+        for n in range(self.nAmp):
+            ax = axes[n]
+            values = self.active_areas[n].flatten().tolist()
+            values = np.array(values, dtype=float)
+            bins = np.arange(np.nanmin(values), np.nanmax(values), 20)
+            ax.hist(values, bins=bins, density=False, histtype = 'step')
+            #ax.set_yscale('log')
+        plt.suptitle("Histogram of Active Area Values")
         plt.show()
-            
+
     def measure_row_drift(self):
         """
         Looks at the single electron peak across the different rows of the overscan
@@ -85,12 +125,16 @@ class QISCCDFactory:
 
         TODO: make graph nice
         """
-        
+        print("calculating the overscan single electron peak")
         fig, axes = plt.subplots(4, 4, figsize =(8,8))
         axes = axes.flatten()
+        self.gains = {}
+        self.overscan_e_peak = {}
+        rows = np.arange(self.nrow)
         for n in range(self.nAmp):
             ax = axes[n]
             zero_peak = []
+
             for r in range(self.nrows):
                 hdul_slice = self.overscans[n][r:r+1, :]
                 slice_list = hdul_slice.flatten().tolist()
@@ -100,6 +144,7 @@ class QISCCDFactory:
                 else:
                     slice_list = np.array(slice_list, dtype=float)
                     #print(r, slice_list)
+<<<<<<< HEAD
                     bins = np.arange(np.nanmin(slice_list), np.nanmax(slice_list), 5)
 
                     slice_counts, bin_edges = np.histogram(slice_list, bins=bins, density=False)
