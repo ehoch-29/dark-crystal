@@ -1,8 +1,8 @@
 from CCDClass import QISCCDFactory
 
-directory = "/home/daq_user/ltaDaemon-master/images/2026-07-02/"
-filename  = "proc_400samp_150rows"
-ccd_data = QISCCDFactory(directory+filename, "9")
+directory = "/home/daq_user/ltaDaemon-master/images/2026-09-04/"
+filename  = "proc_1samp_full_image"
+ccd_data = QISCCDFactory(directory+filename, "46")
 
 ccd_data.load_images(4)
 ccd_data.read_header()

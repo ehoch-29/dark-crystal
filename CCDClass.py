@@ -202,11 +202,12 @@ class QISCCDFactory:
         fit a multi_gaussian to the active area
         """
         print("fitting multi gaussian")
-        fig, axes = plt.subplots(4, 4, figsize =(8,8))
+        n_amps_to_show = 4
+        fig, axes = plt.subplots(1, 4, figsize =(8,8))
         axes = axes.flatten()
         self.noise = {}
         self.darkcounts = {}
-        for n in range(self.nAmp):
+        for n in range(n_amps_to_show):
             print(n)
             ax = axes[n]
             slice_list = self.active_areas[n].flatten().tolist()
@@ -239,10 +240,18 @@ class QISCCDFactory:
                 print(dark_count)
                 
                 self.darkcounts[n] = dark_count/self.npixels/self.exptime
-
-            ax.plot(bin_centers, y)
-            ax.hist(slice_list, bins=bins, density=False, histtype = 'step')
-
+            line1 =ax.hist(slice_list, bins=bins, density=False, histtype='step', 
+                    linewidth=2, color='navy', label='Data')
+            line2 =ax.plot(bin_centers, y, linewidth=2.5, color='red', label='Multi-Gaussian Fit')
+            line3 =ax.axvline(popt[4], color='green', linestyle='--', alpha=0.7, label='Single e⁻ peak')
+    
+            #ax.set_title(f'Amplifier {n}', fontsize=14, fontweight='bold')
+            #fig.legend([line1, line2, line3], ['Data', 'Multi-Gaussian Fit', 'Single e- peak'])
+            ax.set_xlabel('ADU', fontsize=14)
+            ax.set_ylabel('Counts', fontsize=14)
+            #ax.plot(bin_centers, y)
+            #ax.hist(slice_list, bins=bins, density=False, histtype = 'step')
+        plt.tight_layout()    
         plt.show()
         print(self.gains)
         print(self.noise)
