@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 from astropy.io import fits
 from astropy.stats import sigma_clip
+from astropy.visualization import ZScaleInterval, ImageNormalize
 from scipy.signal import find_peaks
 
 def gaussian(x, amp, mean, std):
@@ -28,7 +29,7 @@ class QISCCDFactory:
     tbd
     """
 
-    def __init__(self, image_name, image_num):
+    def __init__(self, image_name, image_num, file_type):
         """
         parameters
         _________
@@ -40,8 +41,9 @@ class QISCCDFactory:
         self.ltanums = [str(1), str(2), str(3), str(4)]
         self.filenames = {}
         for i, lta in enumerate(self.ltanums):
-            self.filenames[i] = self.image_name + "_" + lta + "_" + image_num + ".fits"
+            self.filenames[i] = self.image_name + "_" + lta + "_" + image_num + file_type
         self.box_style = dict(boxstyle='round', facecolor='wheat', alpha=0.5, edgecolor='blue')
+        self.good_hdus = [1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0]
         
     def load_images(self, nAmp):
         """
@@ -62,12 +64,16 @@ class QISCCDFactory:
         Exports various parameters from the CCD header
         """
         self.nrow = int(self.header['NROW'])
+        self.ncol = int(self.header['NCOL'])
         self.samples = float(self.header['NSAMP'])
         self.nCCDcol = int(self.header["CCDNCOL"])
-        self.overscan_start = int(self.nCCDcol + 10)
+        self.nCCDrow = int(self.header["CCDNROW"])
+        self.overscan_start = int(self.nCCDcol)
         self.npixels = self.nrow*self.nCCDcol
         self.exptime = 49.61*60 #to-do, figure out how to make this not hardcoded, for 150 rows and 400 samples
         print(self.header)
+
+        
     def process_overscan(self):
         """
         Pulls out the overscan and does things
@@ -95,19 +101,22 @@ class QISCCDFactory:
         """
         fig, axes = plt.subplots(4, 4, figsize = (8, 8))
         axes = axes.flatten()
+        self.override_row = 1035
+        self.override_col = 515
         try:
             self.active_areas
         except:
             self.active_areas = {}
             for n in range(self.nAmp):
-                self.active_areas[n] = self.hduls[n][:,:self.overscan_start]
+                self.active_areas[n] = self.hduls[n][:self.override_row,7:self.override_col]
                 self.active_areas[n] = sigma_clip(self.active_areas[n], sigma=5)
 
         for n in range(self.nAmp):
             ax = axes[n]
             values = self.active_areas[n].flatten().tolist()
             values = np.array(values, dtype=float)
-            bins = np.arange(np.nanmin(values), np.nanmax(values), 20)
+            bins = np.arange(0, 100, 20)
+            #bins = np.arange(np.nanmin(values), np.nanmax(values), 20)
             ax.hist(values, bins=bins, density=False, histtype = 'step')
             #ax.set_yscale('log')
         plt.suptitle("Histogram of Active Area Values")
@@ -186,17 +195,50 @@ class QISCCDFactory:
             fig.colorbar(im, label='ADU', ax = ax)  # optional color bar
         plt.show()
         
-  
+
+    def stitch_image(self):
+        """
+        Stitching together the 16 amplifiers into one image and plotting it
+
+        Mapping:
+        4.3 4.1 4.2 4.0 2.3 2.1 2.2 2.0
+        3.0 3.2 3.3 3.1 1.0 1.2 1.3 1.1
+
+        15  13  14  12   7  5   6   4
+         8  10  11   9   0  2   3   1
+        """
+        Mapping = [8, 10, 11, 9, 0, 2, 3, 1, 15, 13, 14, 12, 7, 5, 6, 4]
+        xdim = min(self.ncol, self.nCCDcol, self.override_col)-7
+        ydim = min(self.nrow, self.nCCDrow, self.override_row)
+        print(xdim, ydim)
+        full_image = np.full((ydim*2, xdim*8), np.nan)
+                
+        for x in np.arange(1, 3):
+            for y in np.arange(1,9):
+                n = (y-1)+(x-1)*8
+                print(n, x, y)
+                print(ydim*(x-1),ydim*x, xdim*(y-1),xdim*y)
+                if x == 1:
+                    full_image[ydim*(x-1):ydim*x, xdim*(y-1):xdim*y] = self.active_areas[Mapping[n]][:,:]
+                else:
+                    full_image[ydim*(x-1):ydim*x, xdim*(y-1):xdim*y] = self.active_areas[Mapping[n]][::-1,:]
+        plt.imshow(full_image, origin="lower", cmap="gray", interpolation="nearest",
+           norm=ImageNormalize(full_image, interval=ZScaleInterval()))
+        plt.title(self.image_name + self.image_nums)
+        plt.colorbar()
+        plt.show()
     def subtract_overscan(self):
         """
         Take the peak from the overscan and use that as the baseline to subtract off the active area
         """
         print("subtracting the overscan")
         for n in range(self.nAmp):
-            for r in range(self.nrow):
+            for r in range(self.override_row):
                 overscan_single_e = self.overscan_e_peak[n][r]
-                self.active_areas[n][r] = self.active_areas[n][r] - overscan_single_e
-
+                if self.good_hdus[n] == 1:
+                    self.active_areas[n][r] = self.active_areas[n][r] - overscan_single_e
+                else:
+                    self.active_areas[n] = np.zeros((self.override_row, self.override_col-7))
     def fit_multi_gaussian(self):
         """
         fit a multi_gaussian to the active area
@@ -243,7 +285,7 @@ class QISCCDFactory:
             line1 =ax.hist(slice_list, bins=bins, density=False, histtype='step', 
                     linewidth=2, color='navy', label='Data')
             line2 =ax.plot(bin_centers, y, linewidth=2.5, color='red', label='Multi-Gaussian Fit')
-            line3 =ax.axvline(popt[4], color='green', linestyle='--', alpha=0.7, label='Single e⁻ peak')
+            #line3 =ax.axvline(popt[4], color='green', linestyle='--', alpha=0.7, label='Single e⁻ peak')
     
             #ax.set_title(f'Amplifier {n}', fontsize=14, fontweight='bold')
             #fig.legend([line1, line2, line3], ['Data', 'Multi-Gaussian Fit', 'Single e- peak'])
