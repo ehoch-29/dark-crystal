@@ -5,10 +5,20 @@ from astropy.io import fits
 from astropy.stats import sigma_clip
 from astropy.visualization import ZScaleInterval, ImageNormalize
 from scipy.signal import find_peaks
+from scipy.ndimage import gaussian_filter, label
 
 def gaussian(x, amp, mean, std):
     y = amp * np.exp(-((x-mean) ** 2) / (2 * std ** 2))
     return y
+
+def gaussian_2d(coords, amp, x0, y0, sx, sy, theta, offset):
+    """Rotated elliptical 2-D gaussian on a constant background, flattened for curve_fit.
+    coords = (x, y) grids; sx, sy are the widths along the rotated axes; theta in radians."""
+    x, y = coords
+    dx, dy = x - x0, y - y0
+    xr = dx*np.cos(theta) + dy*np.sin(theta)
+    yr = -dx*np.sin(theta) + dy*np.cos(theta)
+    return (offset + amp*np.exp(-(xr**2/(2*sx**2) + yr**2/(2*sy**2)))).ravel()
 
 def multi_gaussian(x, *params):
         """Sum of N gaussians. Params: [std1, ampl1, mean1, amp2, mean2, , ...]"""
@@ -277,22 +287,132 @@ class QISCCDFactory:
         ydim, xdim = self.active_areas[0].shape
         print(xdim, ydim)
         full_image = np.full((ydim*2, xdim*8), np.nan)
+        valid = np.zeros(full_image.shape, dtype=bool)   # False for dead amps
                 
         for x in np.arange(1, 3):
             for y in np.arange(1,9):
                 n = (y-1)+(x-1)*8
                 print(n, x, y)
                 print(ydim*(x-1),ydim*x, xdim*(y-1),xdim*y)
-                if x == 1:
-                    full_image[ydim*(x-1):ydim*x, xdim*(y-1):xdim*y] = self.active_areas[Mapping[n]][:,:]
-                else:
-                    full_image[ydim*(x-1):ydim*x, xdim*(y-1):xdim*y] = self.active_areas[Mapping[n]][::-1,:]
+                # getdata: keep the sigma-clipped pixels (bright LED light gets clipped as outliers)
+                tile = np.ma.getdata(self.active_areas[Mapping[n]])
+                if x != 1:
+                    tile = tile[::-1,:]
+                full_image[ydim*(x-1):ydim*x, xdim*(y-1):xdim*y] = tile
+                valid[ydim*(x-1):ydim*x, xdim*(y-1):xdim*y] = self.good_hdus[Mapping[n]] == 1
+        self.full_image = full_image
+        self.stitch_valid = valid
         plt.imshow(full_image, origin="lower", cmap="gray", interpolation="nearest",
            norm=ImageNormalize(full_image, interval=ZScaleInterval()))
         plt.title(self.image_name + self.image_nums)
         plt.colorbar()
         plt.show()
-        
+
+    def fit_led_spots(self, n_spots=1, bin_factor=None, plot=True, equalize_amps=True):
+        """
+        Fit n_spots rotated elliptical 2-D gaussians (sharing one constant background)
+        to the stitched image, and overlay them on it with the residual underneath.
+
+        Needs stitch_image() to have been run. The fit is done on a block-averaged copy
+        of the image (bin_factor x bin_factor); by default the block size is chosen so the
+        fit sees roughly 40k pixels (1 for images already binned in hardware). Dead amps
+        and NaNs are excluded, and a robust loss keeps hot pixels from dragging the fit.
+
+        Spots are located automatically: the brightest smoothed peak first, then the
+        next brightest after removing the first, and so on. Use n_spots = number of
+        circles you can see.
+
+        equalize_amps: subtract each amplifier's 25th-percentile level first, so amp-to-amp
+            offsets don't dominate the fit (the fitted background is relative to that).
+
+        Returns a dict {"offset": ..., "spots": [ {x0, y0, sigma_1, sigma_2, theta, amp,
+        fwhm, err} ... ]} in full-resolution stitched-image pixels; also in self.led_fit.
+        """
+        img = np.where(self.stitch_valid, self.full_image, np.nan)
+        if equalize_amps:
+            ydim, xdim = self.active_areas[0].shape
+            for i in range(2):
+                for j in range(8):
+                    tile = img[i*ydim:(i+1)*ydim, j*xdim:(j+1)*xdim]   # a view
+                    if np.isfinite(tile).any():
+                        tile -= np.nanpercentile(tile, 25)
+        b = bin_factor or max(1, int(np.ceil(np.sqrt(img.size/40000))))
+        ny, nx = (img.shape[0]//b)*b, (img.shape[1]//b)*b
+        blocks = img[:ny, :nx].reshape(ny//b, b, nx//b, b)
+        with np.errstate(all="ignore"):
+            small = np.nanmean(blocks, axis=(1, 3))
+        yy, xx = np.mgrid[:small.shape[0], :small.shape[1]]
+        good = np.isfinite(small)
+
+        # --- initial guesses: peak of the smoothed image, width from the half-maximum blob ---
+        filled = np.where(good, small, np.nanmedian(small))
+        smooth = gaussian_filter(filled, 2)
+        offset0 = np.nanpercentile(small, 10)
+        guess, lower, upper = [offset0], [-np.inf], [np.inf]
+        remaining = smooth - offset0
+        for _ in range(n_spots):
+            iy, ix = np.unravel_index(np.argmax(np.where(good, remaining, -np.inf)), remaining.shape)
+            amp0 = remaining[iy, ix]
+            blob, _ = label(remaining > amp0/2)
+            w0 = max(np.sqrt(np.count_nonzero(blob == blob[iy, ix])/np.pi)/1.177, 1.0)
+            guess += [amp0, ix, iy, w0, w0, 0.0]
+            lower += [0, 0, 0, 0.5, 0.5, -np.pi]
+            upper += [np.inf, small.shape[1], small.shape[0], small.shape[1], small.shape[0], np.pi]
+            remaining = remaining - gaussian_2d((xx, yy), amp0, ix, iy, w0, w0, 0.0, 0.0).reshape(small.shape)
+
+        def model_flat(coords, offset, *spots):
+            y = np.full(coords[0].size, offset, dtype=float)
+            for k in range(0, len(spots), 6):
+                y += gaussian_2d(coords, *spots[k:k+6], 0.0)
+            return y
+
+        # robust noise scale so hot pixels are down-weighted (soft L1 beyond ~1 noise sigma)
+        noise = 1.4826*np.nanmedian(np.abs((small - smooth)[good]))
+        popt, pcov = curve_fit(model_flat, (xx[good], yy[good]), small[good], p0=guess,
+                               bounds=(lower, upper), loss="soft_l1", f_scale=max(noise, 1.0))
+        perr = np.sqrt(np.diag(pcov))
+
+        # --- binned -> full-resolution pixel coordinates (centre of block i is i*b + (b-1)/2) ---
+        scale = np.array([1, b, b, b, b, 1])
+        spots = []
+        for k in range(1, len(popt), 6):
+            amp, x0, y0, sx, sy, th = popt[k:k+6]
+            spots.append(dict(amp=amp, x0=x0*b + (b-1)/2, y0=y0*b + (b-1)/2,
+                              sigma_1=sx*b, sigma_2=sy*b, theta=th,
+                              fwhm=2*np.sqrt(2*np.log(2))*np.array([sx*b, sy*b]),
+                              err=perr[k:k+6]*scale))
+        self.led_fit = dict(offset=popt[0], spots=spots, bin_factor=b)
+        print(f"background offset {popt[0]:.1f} ADU (block size {b})")
+        for i, sp in enumerate(spots):
+            print(f"spot {i}: centre ({sp['x0']:.1f} +/- {sp['err'][1]:.1f}, "
+                  f"{sp['y0']:.1f} +/- {sp['err'][2]:.1f}) px, amp {sp['amp']:.3g}, "
+                  f"FWHM {sp['fwhm'][0]:.1f} x {sp['fwhm'][1]:.1f} px, theta {sp['theta']:.2f}")
+
+        if plot:
+            model = model_flat((xx, yy), *popt).reshape(small.shape)
+            fig, axes = plt.subplots(2, 1, figsize=(10, 7), sharex=True)
+            extent = (0, nx, 0, ny)
+            norm = ImageNormalize(small[good], interval=ZScaleInterval())
+            axes[0].imshow(small, origin="lower", cmap="gray", norm=norm, extent=extent,
+                           interpolation="nearest")
+            # one FWHM contour per spot (its own gaussian only), in full-resolution pixels
+            xc, yc = (xx + 0.5)*b, (yy + 0.5)*b
+            for k in range(1, len(popt), 6):
+                one = gaussian_2d((xx, yy), *popt[k:k+6], 0.0).reshape(small.shape)
+                axes[0].contour(xc, yc, one, levels=[popt[k]/2], colors="red", linewidths=1.2)
+                axes[0].plot(popt[k+1]*b + (b-1)/2, popt[k+2]*b + (b-1)/2, "+", color="red", ms=12)
+            axes[0].set_title(f"{self.image_name}{self.image_nums}: {n_spots}-spot 2-D gaussian "
+                              "fit (contours = FWHM)")
+            resid = np.where(good, small - model, np.nan)
+            rlim = np.nanpercentile(np.abs(resid), 99)
+            im = axes[1].imshow(resid, origin="lower", cmap="RdBu_r", vmin=-rlim, vmax=rlim,
+                                extent=extent, interpolation="nearest")
+            fig.colorbar(im, ax=axes[1], label="data - fit (ADU)")
+            axes[1].set_title("Residual")
+            plt.tight_layout()
+            plt.show()
+        return self.led_fit
+
     def subtract_overscan(self):
         """
         Take the peak from the overscan and use that as the baseline to subtract off the active area
