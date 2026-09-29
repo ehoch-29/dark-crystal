@@ -156,49 +156,99 @@ class QISCCDFactory:
         plt.suptitle("Histogram of Active Area Values")
         plt.show()
 
-    def measure_row_drift(self):
+    @staticmethod
+    def _zero_peak(values, bin_width=5, min_fit_pixels=100):
         """
-        Looks at the single electron peak across the different rows of the overscan
-        to show whether there is a drift
+        Zero-electron peak position of one row of overscan pixels.
 
-        TODO: make graph nice
+        With enough pixels, histogram the values and fit a gaussian starting from
+        the tallest bin. With too few (e.g. binned images have a narrow overscan)
+        a histogram is too coarse, so use the mean of the sigma-clipped values.
+        Falls back to the same mean if the fit fails.
+        Returns (peak, sigma, (bin_centers, counts, fit)) -- the last is None if
+        no histogram was fit.
         """
-        print("calculating the overscan single electron peak")
-        fig, axes = plt.subplots(4, 4, figsize =(8,8))
-        axes = axes.flatten()
-        self.gains = {}
+        values = np.asarray(values, dtype=float)
+        values = values[np.isfinite(values)]
+        if values.size == 0:
+            return np.nan, np.nan, None
+        mean_fallback = (np.mean(values), np.std(values), None)
+        vmin, vmax = values.min(), values.max()
+        if values.size < min_fit_pixels or vmax - vmin < 2*bin_width:
+            return mean_fallback
+
+        bins = np.arange(vmin, vmax + bin_width, bin_width)
+        counts, edges = np.histogram(values, bins=bins)
+        centers = (edges[:-1] + edges[1:]) / 2
+        peak = np.argmax(counts)
+        try:
+            # x = ADU bin centres, y = counts (the fit variable order matters)
+            popt, _ = curve_fit(gaussian, centers, counts,
+                                p0=(counts[peak], centers[peak], np.std(values)))
+        except (RuntimeError, ValueError):
+            return mean_fallback
+        if not (vmin <= popt[1] <= vmax):
+            return mean_fallback
+        return popt[1], abs(popt[2]), (centers, counts, gaussian(centers, *popt))
+
+    def measure_row_drift(self, plot=True):
+        """
+        Finds the zero-electron peak of the overscan for every row of every
+        amplifier, to show whether the baseline drifts from row to row and so
+        it can be subtracted from the active area by subtract_overscan.
+
+        Needs process_overscan() to have been run first.
+
+        Sets
+            self.overscan_e_peak[n][r]  baseline for row r of the active area
+                                        (indexed like self.active_areas[n])
+            self.overscan_sigma[n][r]   width of the peak in that row
+        """
+        print("calculating the overscan zero peak")
+        if not hasattr(self, "overscans"):
+            self.process_overscan()
+
         self.overscan_e_peak = {}
-        rows = np.arange(self.nrow)
+        self.overscan_sigma = {}
+        first_row = self.row_slice.start
+        rows = np.arange(self.active_rows)
+
+        if plot:
+            fig, axes = plt.subplots(4, 4, figsize=(8, 8), sharex=True)
+            axes = axes.flatten()
+
         for n in range(self.nAmp):
-            ax = axes[n]
-            zero_peak = []
+            # overscans[n] is a masked array (sigma clipped) with the full image height;
+            # active row r sits at image row first_row + r
+            peaks = np.full(self.active_rows, np.nan)
+            sigmas = np.full(self.active_rows, np.nan)
+            for r in rows:
+                row = np.ma.filled(self.overscans[n][first_row + r].astype(float), np.nan)
+                peaks[r], sigmas[r], _ = self._zero_peak(row)
 
-            for r in range(self.nrows):
-                hdul_slice = self.overscans[n][r:r+1, :]
-                slice_list = hdul_slice.flatten().tolist()
-                if not slice_list:
-                    max_bin = 0
-                    #print("row is empty")
-                else:
-                    slice_list = np.array(slice_list, dtype=float)
-                    #print(r, slice_list)
+            # rows with no usable overscan pixels: borrow the amplifier's median baseline
+            bad = ~np.isfinite(peaks)
+            if bad.all():
+                peaks[:] = 0.0
+            elif bad.any():
+                print(f"amp {n}: {bad.sum()} rows without overscan data, using median")
+                peaks[bad] = np.nanmedian(peaks)
+            self.overscan_e_peak[n] = peaks
+            self.overscan_sigma[n] = sigmas
 
-                    bins = np.arange(np.nanmin(slice_list), np.nanmax(slice_list), 5)
-
-                    slice_counts, bin_edges = np.histogram(slice_list, bins=bins, density=False)
-                    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-                    peak = np.argmax(slice_counts)
-                    popt, pcov = curve_fit(gaussian, slice_counts, bin_centers,  p0=(slice_counts[peak], bin_centers[peak], 30))
-                    print(slice_counts[peak], bin_centers[peak], popt)
-                    max_bin = bin_centers[np.argmax(slice_counts)]
-                    zero_peak.append(max_bin)
-                    y = gaussian(bin_centers, popt[0], popt[1], popt[2])
-
-                    ax.hist(slice_list, bins=bins, density=False, histtype = 'step')
-                    ax.plot(bin_centers, y)
-                #ax.plot(np.arange(self.nrow), zero_peak)
-            self.zero_peaks[n] = zero_peak
-        plt.show()
+            print(f"amp {n}: zero peak mean {np.mean(peaks):.1f} ADU, "
+                  f"drift (max-min) {np.ptp(peaks):.1f} ADU")
+            if plot:
+                ax = axes[n]
+                ax.plot(rows, peaks, lw=0.8)
+                ax.set_title(f"Amp {n}", fontsize=8)
+                ax.tick_params(labelsize=6)
+        if plot:
+            fig.supxlabel("Row")
+            fig.supylabel("Zero peak (ADU)")
+            plt.suptitle("Overscan zero peak vs row")
+            plt.tight_layout()
+            plt.show()
 
     def plot_fits(self):
         """
@@ -306,7 +356,7 @@ class QISCCDFactory:
                 ax.hist(values, bins=bins, density=False, histtype='step')
             ax.set_title(f'Amp {n}')
 
-        plt.tight_layout()
+            plt.tight_layout()
             slice_list = self.active_areas[n].flatten().tolist()
             slice_list = np.array(slice_list, dtype=float)
             bins = np.arange(np.nanmin(slice_list), np.nanmax(slice_list), 20)
