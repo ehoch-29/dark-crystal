@@ -29,6 +29,10 @@ class QISCCDFactory:
     tbd
     """
 
+    # Usable region in physical (unbinned) CCD pixels, [start, stop). Empirically
+    # smaller than the nominal active area; set on the instance to change it.
+    crop_rows = (0, 1035)
+    crop_cols = (7, 515)
 
     def __init__(self, image_name, image_num, file_type):
         """
@@ -73,8 +77,34 @@ class QISCCDFactory:
         self.samples = float(self.header['NSAMP'])
         self.nCCDcol = int(self.header["CCDNCOL"])
         self.nCCDrow = int(self.header["CCDNROW"])
-        self.overscan_start = int(self.nCCDcol)
-        self.npixels = self.nrow*self.nCCDcol
+        self.nprescan = int(self.header["CCDNPRES"])
+
+        # Binning and skipped pixels (absent from unbinned headers -> defaults).
+        # NROW/NCOL are already binned counts; SKIP* are in physical pixels.
+        self.rbin = int(self.header.get("NBINROW", 1))
+        self.cbin = int(self.header.get("NBINCOL", 1))
+        self.skiprow = int(self.header.get("SKIPROW", 0))
+        self.skipcol = int(self.header.get("SKIPCOL", 0))
+
+        # Physical pixel bounds -> indices in the (binned) image.
+        # The usable region is smaller than the nominal active area, so it is cropped
+        # to crop_rows/crop_cols (physical, unbinned CCD pixels, half-open), which
+        # scale automatically with binning and skipping.
+        def to_index(phys, skip, nbin, up):
+            x = (phys - skip) / nbin
+            return max(0, int(np.ceil(x) if up else np.floor(x)))
+
+        first_row = to_index(self.crop_rows[0], self.skiprow, self.rbin, up=True)
+        last_row = to_index(min(self.crop_rows[1], self.nCCDrow), self.skiprow, self.rbin, up=False)
+        first_col = to_index(max(self.crop_cols[0], self.nprescan), self.skipcol, self.cbin, up=True)
+        last_col = to_index(min(self.crop_cols[1], self.nCCDcol), self.skipcol, self.cbin, up=False)
+        self.active_rows = last_row - first_row
+        self.active_cols = last_col - first_col
+        self.row_slice = slice(first_row, last_row)
+        self.col_slice = slice(first_col, last_col)
+        # the overscan starts after the full physical CCD, not after the crop
+        self.overscan_slice = slice(to_index(self.nCCDcol, self.skipcol, self.cbin, up=False), None)
+        self.npixels = self.active_rows*self.active_cols
         self.exptime = 49.61*60 #to-do, figure out how to make this not hardcoded, for 150 rows and 400 samples
         print(self.header)
 
@@ -89,7 +119,7 @@ class QISCCDFactory:
         self.overscans = {}
         for n in range(self.nAmp):
             ax = axes[n]
-            self.overscans[n] = self.hduls[n][:,self.overscan_start:]
+            self.overscans[n] = self.hduls[n][:,self.overscan_slice]
             self.overscans[n] = sigma_clip(self.overscans[n], sigma=3)
             values = self.overscans[n].flatten().tolist()
             values = np.array(values, dtype=float)
@@ -107,14 +137,12 @@ class QISCCDFactory:
         """
         fig, axes = plt.subplots(4, 4, figsize = (8, 8))
         axes = axes.flatten()
-        self.override_row = 1035
-        self.override_col = 515
         try:
             self.active_areas
         except:
             self.active_areas = {}
             for n in range(self.nAmp):
-                self.active_areas[n] = self.hduls[n][:self.override_row,7:self.override_col]
+                self.active_areas[n] = self.hduls[n][self.row_slice,self.col_slice]
                 self.active_areas[n] = sigma_clip(self.active_areas[n], sigma=5)
 
         for n in range(self.nAmp):
@@ -196,8 +224,7 @@ class QISCCDFactory:
          8  10  11   9   0  2   3   1
         """
         Mapping = [8, 10, 11, 9, 0, 2, 3, 1, 15, 13, 14, 12, 7, 5, 6, 4]
-        xdim = min(self.ncol, self.nCCDcol, self.override_col)-7
-        ydim = min(self.nrow, self.nCCDrow, self.override_row)
+        ydim, xdim = self.active_areas[0].shape
         print(xdim, ydim)
         full_image = np.full((ydim*2, xdim*8), np.nan)
                 
@@ -222,12 +249,12 @@ class QISCCDFactory:
         """
         print("subtracting the overscan")
         for n in range(self.nAmp):
-            for r in range(self.override_row):
+            for r in range(self.active_rows):
                 overscan_single_e = self.overscan_e_peak[n][r]
                 if self.good_hdus[n] == 1:
                     self.active_areas[n][r] = self.active_areas[n][r] - overscan_single_e
                 else:
-                    self.active_areas[n] = np.zeros((self.override_row, self.override_col-7))
+                    self.active_areas[n] = np.zeros_like(self.active_areas[n])
     def fit_multi_gaussian(self):
         """
         fit a multi_gaussian to the active area
@@ -235,12 +262,10 @@ class QISCCDFactory:
         print("fitting multi gaussian")
         n_amps_to_show = 4
         fig, axes = plt.subplots(1, 4, figsize =(8,8))
->>>>>>> ac49875070ff5518d2684b51f34505560423cc9b
         axes = axes.flatten()
       
         for n in range(self.nAmp):
             ax = axes[n]
-<<<<<<< HEAD
             values = []
             
             for r in range(self.nrow):
@@ -262,7 +287,7 @@ class QISCCDFactory:
                         max_bin = bin_centers[np.argmax(counts)]
                         print(max_bin)
                 # --- Extract active area, subtract overscan, then sigma clip ---
-                raw_row = self.hduls[n][r:r+1, :self.overscan_start].astype(float)
+                raw_row = self.hduls[n][r:r+1, self.col_slice].astype(float)
                 print("active_area: ", np.nanmin(raw_row))
                 corrected_row = raw_row - max_bin
                 print("active area after subtraction: ", np.nanmin(corrected_row), np.nanmax(corrected_row))
@@ -282,7 +307,6 @@ class QISCCDFactory:
             ax.set_title(f'Amp {n}')
 
         plt.tight_layout()
-=======
             slice_list = self.active_areas[n].flatten().tolist()
             slice_list = np.array(slice_list, dtype=float)
             bins = np.arange(np.nanmin(slice_list), np.nanmax(slice_list), 20)
@@ -325,7 +349,6 @@ class QISCCDFactory:
             #ax.plot(bin_centers, y)
             #ax.hist(slice_list, bins=bins, density=False, histtype = 'step')
         plt.tight_layout()    
->>>>>>> ac49875070ff5518d2684b51f34505560423cc9b
         plt.show()
         
 """
