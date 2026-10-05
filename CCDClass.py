@@ -43,6 +43,8 @@ class QISCCDFactory:
     # smaller than the nominal active area; set on the instance to change it.
     crop_rows = (0, 1035)
     crop_cols = (7, 515)
+    # Active-area pixels above this many ADU (after baseline subtraction) are masked
+    max_adu = 2500
 
     def __init__(self, image_name, image_num, file_type):
         """
@@ -152,8 +154,9 @@ class QISCCDFactory:
         except:
             self.active_areas = {}
             for n in range(self.nAmp):
-                self.active_areas[n] = self.hduls[n][self.row_slice,self.col_slice]
-                self.active_areas[n] = sigma_clip(self.active_areas[n], sigma=5)
+                # raw values; the high-value cut is applied in subtract_overscan(), after
+                # the baseline is removed (the threshold is in baseline-subtracted ADU)
+                self.active_areas[n] = np.ma.masked_invalid(self.hduls[n][self.row_slice,self.col_slice])
 
         for n in range(self.nAmp):
             ax = axes[n]
@@ -415,7 +418,8 @@ class QISCCDFactory:
 
     def subtract_overscan(self):
         """
-        Take the peak from the overscan and use that as the baseline to subtract off the active area
+        Take the peak from the overscan and use that as the baseline to subtract off the active area,
+        then mask pixels above self.max_adu (set max_adu = None to keep everything)
         """
         print("subtracting the overscan")
         for n in range(self.nAmp):
@@ -425,6 +429,12 @@ class QISCCDFactory:
                     self.active_areas[n][r] = self.active_areas[n][r] - overscan_single_e
                 else:
                     self.active_areas[n] = np.zeros_like(self.active_areas[n])
+            if self.good_hdus[n] == 1 and self.max_adu is not None:
+                # mask (not delete) so the values stay available, e.g. for fit_led_spots
+                self.active_areas[n] = np.ma.masked_greater(self.active_areas[n], self.max_adu)
+                print(f"amp {n}: masked {np.ma.count_masked(self.active_areas[n])} pixels "
+                      f"above {self.max_adu} ADU")
+                
     def fit_multi_gaussian(self):
         """
         fit a multi_gaussian to the active area
