@@ -275,9 +275,13 @@ class QISCCDFactory:
             fig.colorbar(im, label='ADU', ax = ax)  # optional color bar
         plt.show()
 
-    def stitch_image(self):
+    def stitch_image(self, masked=True):
         """
         Stitching together the 16 amplifiers into one image and plotting it
+
+        masked: plot the image with the pixels cut by max_adu removed (shown in red).
+            The stitched values themselves (self.full_image, used by fit_led_spots) always
+            keep those pixels; self.stitch_mask marks which ones were cut.
 
         Mapping:
         4.3 4.1 4.2 4.0 2.3 2.1 2.2 2.0
@@ -291,23 +295,36 @@ class QISCCDFactory:
         print(xdim, ydim)
         full_image = np.full((ydim*2, xdim*8), np.nan)
         valid = np.zeros(full_image.shape, dtype=bool)   # False for dead amps
+        cut = np.zeros(full_image.shape, dtype=bool)     # True where max_adu masked the pixel
                 
         for x in np.arange(1, 3):
             for y in np.arange(1,9):
                 n = (y-1)+(x-1)*8
                 print(n, x, y)
                 print(ydim*(x-1),ydim*x, xdim*(y-1),xdim*y)
-                # getdata: keep the sigma-clipped pixels (bright LED light gets clipped as outliers)
+                # getdata: keep the cut pixels in full_image (bright LED light is above max_adu)
                 tile = np.ma.getdata(self.active_areas[Mapping[n]])
+                tile_cut = np.ma.getmaskarray(self.active_areas[Mapping[n]])
                 if x != 1:
                     tile = tile[::-1,:]
+                    tile_cut = tile_cut[::-1,:]
                 full_image[ydim*(x-1):ydim*x, xdim*(y-1):xdim*y] = tile
+                cut[ydim*(x-1):ydim*x, xdim*(y-1):xdim*y] = tile_cut
                 valid[ydim*(x-1):ydim*x, xdim*(y-1):xdim*y] = self.good_hdus[Mapping[n]] == 1
         self.full_image = full_image
         self.stitch_valid = valid
-        plt.imshow(full_image, origin="lower", cmap="gray", interpolation="nearest",
-           norm=ImageNormalize(full_image, interval=ZScaleInterval()))
-        plt.title(self.image_name + self.image_nums)
+        self.stitch_mask = cut
+        shown = np.ma.masked_where(cut, full_image) if masked else full_image
+        cmap = plt.get_cmap("gray").copy()
+        cmap.set_bad("red")
+        plt.figure()
+        plt.imshow(shown, origin="lower", cmap=cmap, interpolation="nearest",
+           norm=ImageNormalize(shown.compressed() if masked else full_image,
+                               interval=ZScaleInterval()))
+        title = self.image_name + self.image_nums
+        if masked:
+            title += f"  ({cut.mean()*100:.1f}% of pixels cut above {self.max_adu} ADU, red)"
+        plt.title(title)
         plt.colorbar()
         plt.show()
 
