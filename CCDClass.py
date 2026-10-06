@@ -6,6 +6,7 @@ from astropy.stats import sigma_clip
 from astropy.visualization import ZScaleInterval, ImageNormalize
 from scipy.signal import find_peaks
 from scipy.ndimage import gaussian_filter, label
+from matplotlib.patches import Circle
 
 def gaussian(x, amp, mean, std):
     y = amp * np.exp(-((x-mean) ** 2) / (2 * std ** 2))
@@ -157,6 +158,8 @@ class QISCCDFactory:
                 # raw values; the high-value cut is applied in subtract_overscan(), after
                 # the baseline is removed (the threshold is in baseline-subtracted ADU)
                 self.active_areas[n] = np.ma.masked_invalid(self.hduls[n][self.row_slice,self.col_slice])
+            # untouched copy so subtract_overscan() can be re-run (e.g. with a new max_adu)
+            self.raw_active_areas = {n: a.copy() for n, a in self.active_areas.items()}
 
         for n in range(self.nAmp):
             ax = axes[n]
@@ -349,8 +352,16 @@ class QISCCDFactory:
         equalize_amps: subtract each amplifier's 25th-percentile level first, so amp-to-amp
             offsets don't dominate the fit (the fitted background is relative to that).
 
+        Besides the gaussian parameters, each spot gets r50 and r90: the radii (full-resolution
+        pixels, circles about the fitted centre) enclosing 50% and 90% of the spot's charge,
+        measured directly on the data (background and neighbouring spots removed, summed
+        out to 4 sigma). They don't assume a gaussian profile, so for flat-topped circles
+        they differ from the FWHM/2 the gaussian implies. truncated=True means more than 2% of the
+        spot's fitted light falls off the image, so the radii rely on the fit there.
+
         Returns a dict {"offset": ..., "spots": [ {x0, y0, sigma_1, sigma_2, theta, amp,
-        fwhm, err} ... ]} in full-resolution stitched-image pixels; also in self.led_fit.
+        fwhm, err, r50, r90, charge_adu, filled_fraction, outside_fraction, truncated} ... ]} in
+        full-resolution stitched-image pixels; also in self.led_fit.
         """
         keep = self.stitch_valid & ~self.stitch_mask if use_mask else self.stitch_valid
         img = np.where(keep, self.full_image, np.nan)
@@ -406,12 +417,49 @@ class QISCCDFactory:
                               sigma_1=sx*b, sigma_2=sy*b, theta=th,
                               fwhm=2*np.sqrt(2*np.log(2))*np.array([sx*b, sy*b]),
                               err=perr[k:k+6]*scale))
+
+        # --- enclosed-charge radii measured on the data (not assuming a gaussian shape) ---
+        # Charge = data - fitted background - the *other* spots' fitted light, summed in circles
+        # about this spot's fitted centre out to 4 sigma. Pixels with no data (cut by max_adu,
+        # dead amps, or beyond the image edge) are filled with this spot's fit so they don't
+        # bias the sum; outside_fraction is how much of the fitted light that fill represents.
+        total_model = sum(gaussian_2d((xx, yy), *popt[k:k+6], 0.0).reshape(small.shape)
+                          for k in range(1, len(popt), 6))
+        for i, sp in enumerate(spots):
+            k = 1 + 6*i
+            x0, y0, sx, sy = popt[k+1:k+5]
+            rmax = 4*max(sx, sy)
+            pad = int(np.ceil(rmax)) + 1
+            yp, xp = np.mgrid[-pad:small.shape[0] + pad, -pad:small.shape[1] + pad]
+            own = gaussian_2d((xp, yp), *popt[k:k+6], 0.0).reshape(xp.shape)
+            in_image = (xp >= 0) & (xp < small.shape[1]) & (yp >= 0) & (yp < small.shape[0])
+            own_in = own[pad:-pad, pad:-pad]
+            charge = own.copy()                       # default: this spot's own fit
+            charge[pad:-pad, pad:-pad] = np.where(
+                good, small - popt[0] - (total_model - own_in), own_in)
+            rad = np.hypot(xp - x0, yp - y0)
+            inside = rad <= rmax
+            order = np.argsort(rad[inside])
+            cum = np.cumsum(charge[inside][order])
+            sp["charge_adu"] = cum[-1]*b*b                       # block means -> full-res pixel sum
+            sp["filled_fraction"] = np.count_nonzero(inside & ~in_image)/np.count_nonzero(inside)
+            sp["outside_fraction"] = own[inside & ~in_image].sum()/own[inside].sum()
+            sp["truncated"] = bool(sp["outside_fraction"] > 0.02)   # >2% of the light is off-image
+            if cum[-1] > 0:
+                frac = np.maximum.accumulate(cum/cum[-1])        # noise can make it non-monotonic
+                sp["r50"], sp["r90"] = (np.interp(q, frac, rad[inside][order])*b for q in (0.5, 0.9))
+            else:
+                sp["r50"] = sp["r90"] = np.nan
+
         self.led_fit = dict(offset=popt[0], spots=spots, bin_factor=b)
         print(f"background offset {popt[0]:.1f} ADU (block size {b})")
         for i, sp in enumerate(spots):
             print(f"spot {i}: centre ({sp['x0']:.1f} +/- {sp['err'][1]:.1f}, "
                   f"{sp['y0']:.1f} +/- {sp['err'][2]:.1f}) px, amp {sp['amp']:.3g}, "
                   f"FWHM {sp['fwhm'][0]:.1f} x {sp['fwhm'][1]:.1f} px, theta {sp['theta']:.2f}")
+            print(f"        enclosed charge: r50 = {sp['r50']:.1f} px, r90 = {sp['r90']:.1f} px "
+                  f"(total {sp['charge_adu']:.3g} ADU; {sp['outside_fraction']*100:.1f}% of the fitted "
+                  f"light is off-image{' -> radii unreliable' if sp['truncated'] else ''})")
 
         if plot:
             model = model_flat((xx, yy), *popt).reshape(small.shape)
@@ -426,8 +474,13 @@ class QISCCDFactory:
                 one = gaussian_2d((xx, yy), *popt[k:k+6], 0.0).reshape(small.shape)
                 axes[0].contour(xc, yc, one, levels=[popt[k]/2], colors="red", linewidths=1.2)
                 axes[0].plot(popt[k+1]*b + (b-1)/2, popt[k+2]*b + (b-1)/2, "+", color="red", ms=12)
+            for sp in spots:   # data-based enclosed-charge circles
+                for r, col, ls in ((sp["r50"], "cyan", "--"), (sp["r90"], "yellow", ":")):
+                    if np.isfinite(r):
+                        axes[0].add_patch(Circle((sp["x0"], sp["y0"]), r, fill=False, color=col,
+                                                 ls=ls, lw=1.3))
             axes[0].set_title(f"{self.image_name}{self.image_nums}: {n_spots}-spot 2-D gaussian "
-                              "fit (contours = FWHM)")
+                              "fit (red = FWHM, cyan = 50% charge, yellow = 90% charge)")
             resid = np.where(good, small - model, np.nan)
             rlim = np.nanpercentile(np.abs(resid), 99)
             im = axes[1].imshow(resid, origin="lower", cmap="RdBu_r", vmin=-rlim, vmax=rlim,
@@ -441,22 +494,24 @@ class QISCCDFactory:
     def subtract_overscan(self):
         """
         Take the peak from the overscan and use that as the baseline to subtract off the active area,
-        then mask pixels above self.max_adu (set max_adu = None to keep everything)
+        then mask pixels above self.max_adu (set max_adu = None to keep everything).
+
+        Always starts from the raw active area, so it is safe to re-run after changing
+        max_adu: the baseline is subtracted once and old masks don't carry over.
         """
         print("subtracting the overscan")
         for n in range(self.nAmp):
-            for r in range(self.active_rows):
-                overscan_single_e = self.overscan_e_peak[n][r]
-                if self.good_hdus[n] == 1:
-                    self.active_areas[n][r] = self.active_areas[n][r] - overscan_single_e
-                else:
-                    self.active_areas[n] = np.zeros_like(self.active_areas[n])
-            if self.good_hdus[n] == 1 and self.max_adu is not None:
+            raw = self.raw_active_areas[n]
+            if self.good_hdus[n] != 1:
+                self.active_areas[n] = np.zeros_like(raw)
+                continue
+            area = raw - self.overscan_e_peak[n][:, None]    # one baseline value per row
+            if self.max_adu is not None:
                 # mask (not delete) so the values stay available, e.g. for fit_led_spots
-                self.active_areas[n] = np.ma.masked_greater(self.active_areas[n], self.max_adu)
-                print(f"amp {n}: masked {np.ma.count_masked(self.active_areas[n])} pixels "
-                      f"above {self.max_adu} ADU")
-                
+                area = np.ma.masked_greater(area, self.max_adu)
+                print(f"amp {n}: masked {np.ma.count_masked(area)} pixels above {self.max_adu} ADU")
+            self.active_areas[n] = area
+
     def fit_multi_gaussian(self):
         """
         fit a multi_gaussian to the active area
