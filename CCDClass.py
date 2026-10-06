@@ -280,8 +280,8 @@ class QISCCDFactory:
         Stitching together the 16 amplifiers into one image and plotting it
 
         masked: plot the image with the pixels cut by max_adu removed (shown in red).
-            The stitched values themselves (self.full_image, used by fit_led_spots) always
-            keep those pixels; self.stitch_mask marks which ones were cut.
+            self.full_image always keeps the cut values; self.stitch_mask marks which pixels
+            were cut. fit_led_spots excludes them by default (use_mask=True).
 
         Mapping:
         4.3 4.1 4.2 4.0 2.3 2.1 2.2 2.0
@@ -328,7 +328,7 @@ class QISCCDFactory:
         plt.colorbar()
         plt.show()
 
-    def fit_led_spots(self, n_spots=1, bin_factor=None, plot=True, equalize_amps=True):
+    def fit_led_spots(self, n_spots=1, bin_factor=None, plot=True, equalize_amps=True, use_mask=True):
         """
         Fit n_spots rotated elliptical 2-D gaussians (sharing one constant background)
         to the stitched image, and overlay them on it with the residual underneath.
@@ -337,6 +337,10 @@ class QISCCDFactory:
         of the image (bin_factor x bin_factor); by default the block size is chosen so the
         fit sees roughly 40k pixels (1 for images already binned in hardware). Dead amps
         and NaNs are excluded, and a robust loss keeps hot pixels from dragging the fit.
+
+        use_mask: also exclude the pixels cut by max_adu (self.stitch_mask), so cosmic rays
+            don't pull on the fit. Set False to fit the uncut values (e.g. for bright circles
+            that sit above max_adu themselves).
 
         Spots are located automatically: the brightest smoothed peak first, then the
         next brightest after removing the first, and so on. Use n_spots = number of
@@ -348,7 +352,8 @@ class QISCCDFactory:
         Returns a dict {"offset": ..., "spots": [ {x0, y0, sigma_1, sigma_2, theta, amp,
         fwhm, err} ... ]} in full-resolution stitched-image pixels; also in self.led_fit.
         """
-        img = np.where(self.stitch_valid, self.full_image, np.nan)
+        keep = self.stitch_valid & ~self.stitch_mask if use_mask else self.stitch_valid
+        img = np.where(keep, self.full_image, np.nan)
         if equalize_amps:
             ydim, xdim = self.active_areas[0].shape
             for i in range(2):
